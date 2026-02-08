@@ -48,13 +48,13 @@ var ourPeerId = uuid.New()
 var selectedChatId = uuid.Nil
 
 // current chat text grid to show and append sent/recv messages to
-var curChatContainer *fyne.Container = nil
+var currentChat *container.Scroll = nil
 
 // a slice just for conversion between fyne list id to app chat UUID
 var fyneChatList = []uuid.UUID{}
 
 // chat containers to select from when selecting current chat in UI
-var chatsMap = make(map[uuid.UUID]*fyne.Container)
+var chatsMap = make(map[uuid.UUID]*container.Scroll)
 
 var sentConnectRequests = make(map[string]struct{})
 
@@ -382,18 +382,19 @@ func main() {
 			return
 		}
 		selectedChatId = chatId
-		prevChatGrid := curChatContainer
+		prevChatGrid := currentChat
 		if _, exist := chatsMap[selectedChatId]; !exist {
-			chatsMap[selectedChatId] = container.NewVBox() // NewChatTextGrid()
+			chatsMap[selectedChatId] = container.NewVScroll(container.NewVBox())
 		}
-		curChatContainer = chatsMap[selectedChatId]
+		chatsMap[selectedChatId].SetMinSize(fyne.NewSize(200, 50))
+		currentChat = chatsMap[selectedChatId]
 		if prevChatGrid != nil {
 			prevChatGrid.Hide()
 		}
 		// Here we reassigning inner object of chat, but keep reference to it in peers scroll map
 		// because we still want to show it later when client is selected again
-		chatBorder.Objects[0] = curChatContainer
-		curChatContainer.Show()
+		chatBorder.Objects[0] = currentChat
+		currentChat.Show()
 		textEntry.Enable()
 		textEntryBtn.Enable()
 		clipFileBtn.Enable()
@@ -403,7 +404,7 @@ func main() {
 	unselectChat := func(chatId uuid.UUID) {
 		delete(chatsMap, chatId)
 		// replace with placeholder to delete reference for current peer scroll from UI
-		chatBorder.Objects[0] = widget.NewTextGrid()
+		chatBorder.Objects[0] = container.NewVScroll(container.NewVBox())
 		if chatId == selectedChatId {
 			selectedChatId = uuid.Nil
 			fyne.Do(func() {
@@ -461,8 +462,9 @@ func main() {
 				}
 				fyne.Do(chatList.Refresh)
 				if _, exist := chatsMap[peer.ChatId]; !exist {
-					chatsMap[peer.ChatId] = container.NewVBox()
+					chatsMap[peer.ChatId] = container.NewVScroll(container.NewVBox())
 				}
+				chatsMap[peer.ChatId].SetMinSize(fyne.NewSize(200, 50))
 			case chat := <-hub.ChatRemoved:
 				rmChatFromList(chat.id, &fyneChatList, chatList)
 				unselectChat(chat.id)
@@ -472,24 +474,26 @@ func main() {
 				if !exist {
 					log.Fatalf("error, no chat window found for %s", msg.ToChatId)
 				}
+				chatContent := chat.Content.(*fyne.Container)
 				switch msg.Type {
 				case TypeText:
 					m := fmt.Sprintf("[%s]: %s", msg.FromPeerName, msg.Data)
 					t := canvas.NewText(m, color.White)
 					fyne.Do(func() {
-						chat.Add(container.NewBorder(nil, nil, t, nil))
-						chat.Refresh()
+						chatContent.Add(container.NewBorder(nil, nil, t, nil))
+						chatContent.Refresh()
+						chat.ScrollToBottom()
 					})
 				case TypeImg:
-					// read image
 					img := canvas.NewImageFromReader(bytes.NewReader(msg.Data), uuid.New().String())
 					img.FillMode = canvas.ImageFillOriginal
 					m := fmt.Sprintf("[%s]:", msg.FromPeerName)
 					t := canvas.NewText(m, color.White)
 					fyne.Do(func() {
-						chat.Add(container.NewBorder(nil, nil, t, nil))
-						chat.Add(container.NewBorder(nil, nil, img, nil))
-						chat.Refresh()
+						chatContent.Add(container.NewBorder(nil, nil, t, nil))
+						chatContent.Add(container.NewBorder(nil, nil, img, nil))
+						chatContent.Refresh()
+						chat.ScrollToBottom()
 					})
 				}
 			case msg := <-onSentMessage:
@@ -497,20 +501,22 @@ func main() {
 				if !exist {
 					log.Fatalf("error, no chat window found for %s", msg.ToChatId)
 				}
+				chatContent := chat.Content.(*fyne.Container)
 				switch msg.Type {
 				case TypeText:
 					m := fmt.Sprintf("%s  ", msg.Data)
 					t := canvas.NewText(m, color.White)
 					fyne.Do(func() {
-						chat.Add(container.NewBorder(nil, nil, nil, t))
-						chat.Refresh()
+						chatContent.Add(container.NewBorder(nil, nil, nil, t))
+						chatContent.Refresh()
+						chat.ScrollToBottom()
 					})
 				case TypeImg:
 					img := canvas.NewImageFromReader(bytes.NewReader(msg.Data), uuid.New().String())
 					img.FillMode = canvas.ImageFillOriginal
 					fyne.Do(func() {
-						chat.Add(container.NewBorder(nil, nil, nil, img))
-						chat.Refresh()
+						chatContent.Add(container.NewBorder(nil, nil, nil, img))
+						chatContent.Refresh()
 					})
 				}
 			}
