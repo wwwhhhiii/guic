@@ -24,6 +24,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
+// BUG incorrect IP in connection string
 // BUG client will create many instances of the same chat if connecting to the same server
 
 // TODO add send of images and gifs
