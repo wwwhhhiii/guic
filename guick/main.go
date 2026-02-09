@@ -48,7 +48,7 @@ var ourPeerId = uuid.New()
 var selectedChatId = uuid.Nil
 
 // current chat text grid to show and append sent/recv messages to
-var currentChat *container.Scroll = nil
+var currentChatWindow *container.Scroll = nil
 
 // a slice just for conversion between fyne list id to app chat UUID
 var fyneChatList = []uuid.UUID{}
@@ -376,25 +376,30 @@ func main() {
 	)
 	content.SetOffset(0.3)
 
+	getOrCreateChatWindow := func(chatId uuid.UUID) *container.Scroll {
+		if _, exist := chatsMap[chatId]; !exist {
+			w := container.NewVScroll(container.NewVBox())
+			w.SetMinSize(fyne.NewSize(200, 50))
+			chatsMap[chatId] = w
+		}
+		return chatsMap[chatId]
+	}
+
 	chatList.OnSelected = func(id widget.ListItemID) {
 		chatId := fyneChatList[id]
 		if chatId == uuid.Nil {
 			return
 		}
 		selectedChatId = chatId
-		prevChatGrid := currentChat
-		if _, exist := chatsMap[selectedChatId]; !exist {
-			chatsMap[selectedChatId] = container.NewVScroll(container.NewVBox())
-		}
-		chatsMap[selectedChatId].SetMinSize(fyne.NewSize(200, 50))
-		currentChat = chatsMap[selectedChatId]
-		if prevChatGrid != nil {
-			prevChatGrid.Hide()
+		prevChatWindow := currentChatWindow
+		currentChatWindow = getOrCreateChatWindow(selectedChatId)
+		if prevChatWindow != nil {
+			prevChatWindow.Hide()
 		}
 		// Here we reassigning inner object of chat, but keep reference to it in peers scroll map
 		// because we still want to show it later when client is selected again
-		chatBorder.Objects[0] = currentChat
-		currentChat.Show()
+		chatBorder.Objects[0] = currentChatWindow
+		currentChatWindow.Show()
 		textEntry.Enable()
 		textEntryBtn.Enable()
 		clipFileBtn.Enable()
@@ -461,10 +466,7 @@ func main() {
 					fyneChatList = append(fyneChatList, peer.ChatId)
 				}
 				fyne.Do(chatList.Refresh)
-				if _, exist := chatsMap[peer.ChatId]; !exist {
-					chatsMap[peer.ChatId] = container.NewVScroll(container.NewVBox())
-				}
-				chatsMap[peer.ChatId].SetMinSize(fyne.NewSize(200, 50))
+				getOrCreateChatWindow(peer.ChatId)
 			case chat := <-hub.ChatRemoved:
 				rmChatFromList(chat.id, &fyneChatList, chatList)
 				unselectChat(chat.id)
