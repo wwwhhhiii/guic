@@ -26,6 +26,7 @@ const (
 	TypeText MessageType = iota
 	TypeImg
 	TypeGIF
+	TypeFile
 )
 
 type Message struct {

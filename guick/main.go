@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"slices"
 
 	"github.com/google/uuid"
 	"golang.design/x/clipboard"
@@ -31,9 +32,8 @@ import (
 
 // BUG client will create many instances of the same chat if connecting to the same server
 
-// TODO change constant addition of border containers to two VBoxes for each peer
-// TODO add send of images and gifs
-// TODO add calls (audio, video, personal, group)
+// TODO add calls (audio, video)
+// TODO add send of gifs
 // TODO add headless mode
 
 var appHost = flag.String("host", "0.0.0.0", "http server host")
@@ -298,7 +298,7 @@ func main() {
 			return
 		}
 		clipboard.Write(clipboard.FmtText, []byte(base64.StdEncoding.EncodeToString(condata)))
-		NewModalPopup("copied to clipboard", mainWindow.Canvas()).Show()
+		NewModalPopup("Copied to clipboard", mainWindow.Canvas()).Show()
 	})
 	connContainer := container.NewBorder(
 		container.NewVBox(connEntry, cpyConnStringBtn),
@@ -349,7 +349,7 @@ func main() {
 				FromPeerId:   ourPeerId,
 				FromPeerName: nickname,
 				ToChatId:     selectedChatId,
-				Type:         TypeImg,
+				Type:         TypeFile,
 				Data:         data,
 			}
 		}
@@ -385,9 +385,14 @@ func main() {
 		return chatsMap[chatId]
 	}
 
-	chatList.OnSelected = func(id widget.ListItemID) {
-		chatId := fyneChatList[id]
+	chatList.OnSelected = func(lii widget.ListItemID) {
+		chatId := fyneChatList[lii]
 		if chatId == uuid.Nil {
+			return
+		}
+		// TODO this condition does not wooooork
+		if chatId == selectedChatId {
+			chatList.Unselect(lii)
 			return
 		}
 		selectedChatId = chatId
@@ -405,21 +410,19 @@ func main() {
 		clipFileBtn.Enable()
 		rmChatBtn.Enable()
 	}
-	// remove chat widgets from app window, disble control buttons
-	unselectChat := func(chatId uuid.UUID) {
-		delete(chatsMap, chatId)
-		// replace with placeholder to delete reference for current peer scroll from UI
-		chatBorder.Objects[0] = container.NewVScroll(container.NewVBox())
-		if chatId == selectedChatId {
-			selectedChatId = uuid.Nil
-			fyne.Do(func() {
+	chatList.OnUnselected = func(lii widget.ListItemID) {
+		if lii < len(fyneChatList) {
+			chatId := fyneChatList[lii]
+			// replace with placeholder to delete reference for current peer scroll from UI
+			chatBorder.Objects[0] = container.NewVScroll(container.NewVBox())
+			if chatId == selectedChatId {
+				selectedChatId = uuid.Nil
 				textEntry.Disable()
 				textEntryBtn.Disable()
 				clipFileBtn.Disable()
 				rmChatBtn.Disable()
-			})
+			}
 		}
-
 	}
 	rmChatFromList := func(chatId uuid.UUID, chatList *[]uuid.UUID, chatListWdg *widget.List) {
 		deleteIdx := -1
@@ -469,7 +472,12 @@ func main() {
 				getOrCreateChatWindow(peer.ChatId)
 			case chat := <-hub.ChatRemoved:
 				rmChatFromList(chat.id, &fyneChatList, chatList)
-				unselectChat(chat.id)
+				lii := slices.Index(fyneChatList, chat.id)
+				if lii != -1 {
+					chatId := fyneChatList[lii]
+					delete(chatsMap, chatId)
+					chatList.Unselect(widget.ListItemID(lii))
+				}
 				fyne.Do(chatList.Refresh)
 			case msg := <-onRecvMessage:
 				chat, exist := chatsMap[msg.ToChatId]
@@ -484,7 +492,6 @@ func main() {
 					fyne.Do(func() {
 						chatContent.Add(container.NewBorder(nil, nil, t, nil))
 						chatContent.Refresh()
-						chat.ScrollToBottom()
 					})
 				case TypeImg:
 					img := canvas.NewImageFromReader(bytes.NewReader(msg.Data), uuid.New().String())
@@ -495,7 +502,12 @@ func main() {
 						chatContent.Add(container.NewBorder(nil, nil, t, nil))
 						chatContent.Add(container.NewBorder(nil, nil, img, nil))
 						chatContent.Refresh()
-						chat.ScrollToBottom()
+					})
+				case TypeFile:
+					t := canvas.NewText(fmt.Sprintf("[%s]: %s", msg.FromPeerName, "<File sent>"), color.White)
+					fyne.Do(func() {
+						chatContent.Add(container.NewBorder(nil, nil, t, nil))
+						chatContent.Refresh()
 					})
 				}
 			case msg := <-onSentMessage:
