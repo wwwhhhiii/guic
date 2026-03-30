@@ -1,34 +1,40 @@
 package main
 
 import (
+	"bytes"
 	"crypto/ecdh"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"image/color"
+	"io"
 	"log"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"slices"
 
 	"github.com/google/uuid"
 	"golang.design/x/clipboard"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/widget"
 )
 
 // BUG incorrect IP in connection string
 // BUG client will create many instances of the same chat if connecting to the same server
 
-// TODO add send of images and gifs
-// TODO add calls (audio, video, personal, group)
+// TODO add calls (audio, video)
+// TODO add send of gifs
 // TODO add headless mode
 
 var appHost = flag.String("host", "0.0.0.0", "http server host")
@@ -43,13 +49,13 @@ var ourPeerId = uuid.New()
 var selectedChatId = uuid.Nil
 
 // current chat text grid to show and append sent/recv messages to
-var curChatTextGrid *widget.TextGrid = nil
+var currentChatWindow *container.Scroll = nil
 
 // a slice just for conversion between fyne list id to app chat UUID
 var fyneChatList = []uuid.UUID{}
 
 // chat containers to select from when selecting current chat in UI
-var chatTextGrids = make(map[uuid.UUID]*widget.TextGrid)
+var chatsMap = make(map[uuid.UUID]*container.Scroll)
 
 var sentConnectRequests = make(map[string]struct{})
 
@@ -168,7 +174,30 @@ func main() {
 	chatList := widget.NewList(
 		func() int { return len(fyneChatList) },
 		func() fyne.CanvasObject {
-			return widget.NewLabel("")
+			chatIdLabel := widget.NewLabel("")
+			btn := widget.NewButton("cpy", func() {
+				chatId, err := uuid.Parse(chatIdLabel.Text)
+				if err != nil {
+					NewModalPopup("Chat id parse error", mainWindow.Canvas()).Show()
+					return
+				}
+				if err := clipboard.Init(); err != nil {
+					NewModalPopup("clipboard not available", mainWindow.Canvas()).Show()
+					return
+				}
+				chat, exist := hub.LockedPeekChat(chatId)
+				if !exist {
+					panic("selected chat does not exist")
+				}
+				if !chat.isHosted {
+					NewModalPopup("you are not chat host", mainWindow.Canvas()).Show()
+					return
+				}
+				cs, err := CreateConnectionString(signKey, chatId, serverAddr)
+				clipboard.Write(clipboard.FmtText, cs)
+				NewModalPopup("Copied to clipboard", mainWindow.Canvas()).Show()
+			})
+			return container.NewHBox(chatIdLabel, btn)
 		},
 		func(lii widget.ListItemID, co fyne.CanvasObject) {
 			chatId := fyneChatList[lii]
@@ -179,7 +208,7 @@ func main() {
 			if !exist {
 				log.Fatalf("chat not found: %s", chatId)
 			}
-			co.(*widget.Label).SetText(chat.id.String())
+			co.(*fyne.Container).Objects[0].(*widget.Label).SetText(chat.id.String())
 		},
 	)
 
@@ -268,32 +297,14 @@ func main() {
 			return
 		}
 		chatId := uuid.New()
-		if selectedChatId != uuid.Nil {
-			chat, exist := hub.LockedPeekChat(selectedChatId)
-			if !exist {
-				panic("selected chat does not exist")
-			}
-			if !chat.isHosted {
-				NewModalPopup("you are not chat host", mainWindow.Canvas()).Show()
-				return
-			}
-			chatId = selectedChatId
-		}
-		encChatId, err := Encrypt(chatId[:], signKey)
+		constr, err := CreateConnectionString(signKey, chatId, serverAddr)
 		if err != nil {
-			slog.Error("connection data creation", "error", err)
-			NewModalPopup("connection data creation error", mainWindow.Canvas()).Show()
+			slog.Error("connection string generation", "error", err)
+			NewModalPopup("connection string generation error", mainWindow.Canvas()).Show()
 			return
 		}
-		b64chat := base64.StdEncoding.EncodeToString(encChatId)
-		condata, err := json.Marshal(&ConnectionCredentials{serverAddr, b64chat})
-		if err != nil {
-			slog.Error("connection data creation", "error", err)
-			NewModalPopup("connection data creation error", mainWindow.Canvas()).Show()
-			return
-		}
-		clipboard.Write(clipboard.FmtText, []byte(base64.StdEncoding.EncodeToString(condata)))
-		NewModalPopup("copied to clipboard", mainWindow.Canvas()).Show()
+		clipboard.Write(clipboard.FmtText, constr)
+		NewModalPopup("Copied to clipboard", mainWindow.Canvas()).Show()
 	})
 	connContainer := container.NewBorder(
 		container.NewVBox(connEntry, cpyConnStringBtn),
@@ -318,7 +329,8 @@ func main() {
 			FromPeerId:   ourPeerId,
 			FromPeerName: nickname,
 			ToChatId:     selectedChatId,
-			Txt:          text,
+			Type:         TypeText,
+			Data:         []byte(text),
 		}
 		textEntry.SetText("")
 	}
@@ -329,11 +341,32 @@ func main() {
 		}
 		sendMessage(textEntry.Text)
 	})
+	clipFileBtn := widget.NewButton("📎", func() {
+		onSelect := func(r fyne.URIReadCloser, err error) {
+			if r == nil {
+				return
+			}
+			data, err := io.ReadAll(r)
+			if err != nil {
+				// TODO some notification if file cant be processed
+				return
+			}
+			hub.sendMessage <- &Message{
+				FromPeerId:   ourPeerId,
+				FromPeerName: nickname,
+				ToChatId:     selectedChatId,
+				Type:         TypeFile,
+				Data:         data,
+			}
+		}
+		dialog.NewFileOpen(onSelect, mainWindow).Show()
+	})
 	textEntry.Disable()
 	textEntryBtn.Disable()
+	clipFileBtn.Disable()
 	textSendEntry := container.NewVBox(
 		textEntry,
-		textEntryBtn,
+		container.NewBorder(nil, nil, clipFileBtn, nil, textEntryBtn),
 	)
 	placeholderTextGrid := widget.NewTextGrid()
 	chatBorder := container.NewBorder(
@@ -349,42 +382,53 @@ func main() {
 	)
 	content.SetOffset(0.3)
 
-	chatList.OnSelected = func(id widget.ListItemID) {
-		chatId := fyneChatList[id]
+	getOrCreateChatWindow := func(chatId uuid.UUID) *container.Scroll {
+		if _, exist := chatsMap[chatId]; !exist {
+			w := container.NewVScroll(container.NewVBox())
+			w.SetMinSize(fyne.NewSize(200, 50))
+			chatsMap[chatId] = w
+		}
+		return chatsMap[chatId]
+	}
+
+	chatList.OnSelected = func(lii widget.ListItemID) {
+		chatId := fyneChatList[lii]
 		if chatId == uuid.Nil {
 			return
 		}
-		selectedChatId = chatId
-		prevChatGrid := curChatTextGrid
-		if _, exist := chatTextGrids[selectedChatId]; !exist {
-			chatTextGrids[selectedChatId] = NewChatTextGrid()
+		// TODO this condition does not wooooork
+		if chatId == selectedChatId {
+			chatList.Unselect(lii)
+			return
 		}
-		curChatTextGrid = chatTextGrids[selectedChatId]
-		if prevChatGrid != nil {
-			prevChatGrid.Hide()
+		selectedChatId = chatId
+		prevChatWindow := currentChatWindow
+		currentChatWindow = getOrCreateChatWindow(selectedChatId)
+		if prevChatWindow != nil {
+			prevChatWindow.Hide()
 		}
 		// Here we reassigning inner object of chat, but keep reference to it in peers scroll map
 		// because we still want to show it later when client is selected again
-		chatBorder.Objects[0] = curChatTextGrid
-		curChatTextGrid.Show()
+		chatBorder.Objects[0] = currentChatWindow
+		currentChatWindow.Show()
 		textEntry.Enable()
 		textEntryBtn.Enable()
+		clipFileBtn.Enable()
 		rmChatBtn.Enable()
 	}
-	// remove chat widgets from app window, disble control buttons
-	unselectChat := func(chatId uuid.UUID) {
-		delete(chatTextGrids, chatId)
-		// replace with placeholder to delete reference for current peer scroll from UI
-		chatBorder.Objects[0] = widget.NewTextGrid()
-		if chatId == selectedChatId {
-			selectedChatId = uuid.Nil
-			fyne.Do(func() {
+	chatList.OnUnselected = func(lii widget.ListItemID) {
+		if lii < len(fyneChatList) {
+			chatId := fyneChatList[lii]
+			// replace with placeholder to delete reference for current peer scroll from UI
+			chatBorder.Objects[0] = container.NewVScroll(container.NewVBox())
+			if chatId == selectedChatId {
+				selectedChatId = uuid.Nil
 				textEntry.Disable()
 				textEntryBtn.Disable()
+				clipFileBtn.Disable()
 				rmChatBtn.Disable()
-			})
+			}
 		}
-
 	}
 	rmChatFromList := func(chatId uuid.UUID, chatList *[]uuid.UUID, chatListWdg *widget.List) {
 		deleteIdx := -1
@@ -402,40 +446,99 @@ func main() {
 		}
 	}
 
+	shiftCtrlV := &desktop.CustomShortcut{
+		KeyName:  fyne.KeyV,
+		Modifier: fyne.KeyModifierShift | fyne.KeyModifierControl,
+	}
+	mainWindow.Canvas().AddShortcut(shiftCtrlV, func(shortcut fyne.Shortcut) {
+		if err := clipboard.Init(); err != nil {
+			slog.Error("clipboard not available")
+			return
+		}
+		data := clipboard.Read(clipboard.FmtImage)
+		hub.sendMessage <- &Message{
+			FromPeerId:   ourPeerId,
+			FromPeerName: nickname,
+			ToChatId:     selectedChatId,
+			Type:         TypeImg,
+			Data:         data,
+		}
+	})
+
 	// a UI reactor
 	// essentially reads events from hub channels and updates relevant UI components
 	go func() {
 		for {
 			select {
 			case peer := <-onPeerRegistered:
-				if _, exist := chatTextGrids[peer.ChatId]; !exist {
+				if _, exist := chatsMap[peer.ChatId]; !exist {
 					fyneChatList = append(fyneChatList, peer.ChatId)
 				}
 				fyne.Do(chatList.Refresh)
-				if _, exist := chatTextGrids[peer.ChatId]; !exist {
-					chatTextGrids[peer.ChatId] = NewChatTextGrid()
-				}
+				getOrCreateChatWindow(peer.ChatId)
 			case chat := <-hub.ChatRemoved:
 				rmChatFromList(chat.id, &fyneChatList, chatList)
-				unselectChat(chat.id)
+				lii := slices.Index(fyneChatList, chat.id)
+				if lii != -1 {
+					chatId := fyneChatList[lii]
+					delete(chatsMap, chatId)
+					chatList.Unselect(widget.ListItemID(lii))
+				}
 				fyne.Do(chatList.Refresh)
 			case msg := <-onRecvMessage:
-				fyne.Do(func() {
-					if grid, exist := chatTextGrids[msg.ToChatId]; exist {
-						grid.Append(fmt.Sprintf("[%s]: %s", msg.FromPeerName, msg.Txt))
-					} else {
-						log.Fatalf("error, no chat window found for %s", msg.ToChatId)
-					}
-				})
+				chat, exist := chatsMap[msg.ToChatId]
+				if !exist {
+					log.Fatalf("error, no chat window found for %s", msg.ToChatId)
+				}
+				chatContent := chat.Content.(*fyne.Container)
+				switch msg.Type {
+				case TypeText:
+					m := fmt.Sprintf("[%s]: %s", msg.FromPeerName, msg.Data)
+					t := canvas.NewText(m, color.White)
+					fyne.Do(func() {
+						chatContent.Add(container.NewBorder(nil, nil, t, nil))
+						chatContent.Refresh()
+					})
+				case TypeImg:
+					img := canvas.NewImageFromReader(bytes.NewReader(msg.Data), uuid.New().String())
+					img.FillMode = canvas.ImageFillOriginal
+					m := fmt.Sprintf("[%s]:", msg.FromPeerName)
+					t := canvas.NewText(m, color.White)
+					fyne.Do(func() {
+						chatContent.Add(container.NewBorder(nil, nil, t, nil))
+						chatContent.Add(container.NewBorder(nil, nil, img, nil))
+						chatContent.Refresh()
+					})
+				case TypeFile:
+					t := canvas.NewText(fmt.Sprintf("[%s]: %s", msg.FromPeerName, "<File sent>"), color.White)
+					fyne.Do(func() {
+						chatContent.Add(container.NewBorder(nil, nil, t, nil))
+						chatContent.Refresh()
+					})
+				}
 			case msg := <-onSentMessage:
-				fyne.Do(func() {
-					if grid, exist := chatTextGrids[msg.ToChatId]; exist {
-						grid.Append(fmt.Sprintf("[me]: %s", msg.Txt))
-						grid.ScrollToBottom()
-					} else {
-						log.Fatalf("error, no chat window found for %s", msg.ToChatId)
-					}
-				})
+				chat, exist := chatsMap[msg.ToChatId]
+				if !exist {
+					log.Fatalf("error, no chat window found for %s", msg.ToChatId)
+				}
+				chatContent := chat.Content.(*fyne.Container)
+				switch msg.Type {
+				case TypeText:
+					m := fmt.Sprintf("%s  ", msg.Data)
+					t := canvas.NewText(m, color.White)
+					fyne.Do(func() {
+						chatContent.Add(container.NewBorder(nil, nil, nil, t))
+						chatContent.Refresh()
+						chat.ScrollToBottom()
+					})
+				case TypeImg:
+					img := canvas.NewImageFromReader(bytes.NewReader(msg.Data), uuid.New().String())
+					img.FillMode = canvas.ImageFillOriginal
+					fyne.Do(func() {
+						chatContent.Add(container.NewBorder(nil, nil, nil, img))
+						chatContent.Refresh()
+					})
+				}
 			}
 		}
 	}()

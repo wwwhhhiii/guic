@@ -29,9 +29,3 @@ func NewPeerRequestElement(text string, accepted chan<- bool) *fyne.Container {
 		widget.NewButton("✖", func() { accepted <- false }),
 	)
 }
-
-func NewChatTextGrid() *widget.TextGrid {
-	textGrid := widget.NewTextGrid()
-	textGrid.Scroll = fyne.ScrollBoth
-	return textGrid
-}
