@@ -173,7 +173,30 @@ func main() {
 	chatList := widget.NewList(
 		func() int { return len(fyneChatList) },
 		func() fyne.CanvasObject {
-			return widget.NewLabel("")
+			chatIdLabel := widget.NewLabel("")
+			btn := widget.NewButton("cpy", func() {
+				chatId, err := uuid.Parse(chatIdLabel.Text)
+				if err != nil {
+					NewModalPopup("Chat id parse error", mainWindow.Canvas()).Show()
+					return
+				}
+				if err := clipboard.Init(); err != nil {
+					NewModalPopup("clipboard not available", mainWindow.Canvas()).Show()
+					return
+				}
+				chat, exist := hub.LockedPeekChat(chatId)
+				if !exist {
+					panic("selected chat does not exist")
+				}
+				if !chat.isHosted {
+					NewModalPopup("you are not chat host", mainWindow.Canvas()).Show()
+					return
+				}
+				cs, err := CreateConnectionString(signKey, chatId, serverAddr)
+				clipboard.Write(clipboard.FmtText, cs)
+				NewModalPopup("Copied to clipboard", mainWindow.Canvas()).Show()
+			})
+			return container.NewHBox(chatIdLabel, btn)
 		},
 		func(lii widget.ListItemID, co fyne.CanvasObject) {
 			chatId := fyneChatList[lii]
@@ -184,7 +207,7 @@ func main() {
 			if !exist {
 				log.Fatalf("chat not found: %s", chatId)
 			}
-			co.(*widget.Label).SetText(chat.id.String())
+			co.(*fyne.Container).Objects[0].(*widget.Label).SetText(chat.id.String())
 		},
 	)
 
@@ -273,31 +296,13 @@ func main() {
 			return
 		}
 		chatId := uuid.New()
-		if selectedChatId != uuid.Nil {
-			chat, exist := hub.LockedPeekChat(selectedChatId)
-			if !exist {
-				panic("selected chat does not exist")
-			}
-			if !chat.isHosted {
-				NewModalPopup("you are not chat host", mainWindow.Canvas()).Show()
-				return
-			}
-			chatId = selectedChatId
-		}
-		encChatId, err := Encrypt(chatId[:], signKey)
+		constr, err := CreateConnectionString(signKey, chatId, serverAddr)
 		if err != nil {
-			slog.Error("connection data creation", "error", err)
-			NewModalPopup("connection data creation error", mainWindow.Canvas()).Show()
+			slog.Error("connection string generation", "error", err)
+			NewModalPopup("connection string generation error", mainWindow.Canvas()).Show()
 			return
 		}
-		b64chat := base64.StdEncoding.EncodeToString(encChatId)
-		condata, err := json.Marshal(&ConnectionCredentials{serverAddr, b64chat})
-		if err != nil {
-			slog.Error("connection data creation", "error", err)
-			NewModalPopup("connection data creation error", mainWindow.Canvas()).Show()
-			return
-		}
-		clipboard.Write(clipboard.FmtText, []byte(base64.StdEncoding.EncodeToString(condata)))
+		clipboard.Write(clipboard.FmtText, constr)
 		NewModalPopup("Copied to clipboard", mainWindow.Canvas()).Show()
 	})
 	connContainer := container.NewBorder(
