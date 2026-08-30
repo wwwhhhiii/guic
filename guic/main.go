@@ -41,8 +41,43 @@ var currentChatWindow *container.Scroll = nil
 // a slice just for conversion between fyne list id to app chat UUID
 var fyneChatList = []uuid.UUID{}
 
+type ChatUI struct {
+	win  *container.Scroll
+	name string
+}
+
 // chat containers to select from when selecting current chat in UI
-var chatsMapUI = make(map[uuid.UUID]*container.Scroll)
+var chatsMapUI = make(map[uuid.UUID]*ChatUI)
+
+type GUIApp struct {
+	peerConnected    chan *Peer
+	peerDisconnected chan *Peer
+	recvMessage      chan *Message
+	ctrlMessage      chan struct {
+		string
+		*Peer
+	}
+	dataMessage chan struct {
+		byte
+		*Peer
+	}
+}
+
+func NewGUIApp() *GUIApp {
+	return &GUIApp{
+		peerConnected:    make(chan *Peer, 20),
+		peerDisconnected: make(chan *Peer, 20),
+		recvMessage:      make(chan *Message, 100),
+		ctrlMessage: make(chan struct {
+			string
+			*Peer
+		}, 10),
+		dataMessage: make(chan struct {
+			byte
+			*Peer
+		}, 10),
+	}
+}
 
 func main() {
 	flag.Parse()
@@ -53,6 +88,17 @@ func main() {
 	h := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: programLevel})
 	slog.SetDefault(slog.New(h))
 
+	// app
+	interrupt := make(chan os.Signal, 1)
+	signal.Notify(interrupt, os.Interrupt)
+	guiapp := NewGUIApp()
+
+	var application fyne.App
+	var mainWindow fyne.Window
+
+	// appCtx := context.Background()
+	nickname := GenRandNickname()
+
 	// webrtc
 	webrtcConf := webrtc.Configuration{
 		ICEServers: []webrtc.ICEServer{
@@ -62,27 +108,6 @@ func main() {
 		},
 	}
 
-	// app
-	interrupt := make(chan os.Signal, 1)
-	signal.Notify(interrupt, os.Interrupt)
-
-	peerConnectedUI := make(chan *Peer, 50)
-	peerDisconnectedUI := make(chan *Peer, 50)
-	messageReceived := make(chan *Message, 100)
-	ctrlMessage := make(chan struct {
-		string
-		*Peer
-	}, 10)
-	imgMessage := make(chan struct {
-		byte
-		*Peer
-	}, 10)
-
-	var application fyne.App
-	var mainWindow fyne.Window
-
-	// appCtx := context.Background()
-	nickname := GenRandNickname()
 	slog.Info("App is running", "name", nickname)
 
 	application = app.New()
@@ -102,9 +127,10 @@ func main() {
 			}
 			chat, exist := chatsMap[chatId]
 			if !exist {
+				// TODO recover and remove chat
 				log.Fatalf("chat not found: %s", chatId)
 			}
-			co.(*fyne.Container).Objects[0].(*widget.Label).SetText(chat.id.String())
+			co.(*fyne.Container).Objects[0].(*widget.Label).SetText(chat.name)
 		},
 	)
 
@@ -132,7 +158,7 @@ func main() {
 				)
 			})
 
-			peer, answer, err := SetupOfferee(webrtcConf, offerEntry.Text, nickname, messageReceived)
+			peer, answer, err := SetupOfferee(guiapp, webrtcConf, offerEntry.Text, nickname)
 			if err != nil {
 				NewModalPopup(fmt.Sprintf("Setup error: %s", err), mainWindow.Canvas()).Show()
 				slog.Error("Setup offeree", "error", err)
@@ -170,14 +196,13 @@ func main() {
 				// TODO
 				return
 			case <-peer.Ready():
-				//
 				break
 			}
 			addChat(peer.chat)
 			peer.chat.addPeers(peer)
 			fmt.Println("peer chat", peer.chat.id)
 			go peer.chat.WritePump(context.TODO())
-			peerConnectedUI <- peer
+			guiapp.peerConnected <- peer
 
 			fyne.Do(func() {
 				activity.Stop()
@@ -205,19 +230,19 @@ func main() {
 		addWin := application.NewWindow("Add new peer")
 		addWin.Resize(fyne.NewSize(400, 200))
 
-		chatsIds := make([]string, len(chatsMap))
-		for k := range chatsMapUI {
-			chatsIds = append(chatsIds, k.String())
+		chatsNames := make([]string, len(chatsMap))
+		for _, v := range chatsMapUI {
+			chatsNames = append(chatsNames, v.name)
 		}
-		chatsSelect := widget.NewSelect(chatsIds, func(s string) {})
+		chatsSelect := widget.NewSelect(chatsNames, func(s string) {})
 		chatsSelect.PlaceHolder = "Create new chat"
 
 		submit := func() {
 			var chat *Chat
 			if chatsSelect.SelectedIndex() == -1 {
-				prompt, textReady := TextPrompt(addWin.Canvas(), "Enter new chat name")
+				prompt, promptSubmitted := TextPrompt(addWin.Canvas(), "Enter new chat name")
 				addWin.Canvas().Focus(prompt)
-				name := <-textReady
+				name := <-promptSubmitted
 				chat = NewChat(name, true)
 			} else {
 				id, err := uuid.Parse(chatsSelect.Selected)
@@ -245,7 +270,7 @@ func main() {
 				)
 			})
 
-			offerstr, peer, err := SetupOfferor(webrtcConf, chat, nickname, chat.name, messageReceived)
+			offerstr, peer, err := SetupOfferor(guiapp, webrtcConf, chat, nickname, chat.name)
 			if err != nil {
 				log.Fatalln(err)
 			}
@@ -294,7 +319,7 @@ func main() {
 				chat.addPeers(peer)
 				addChat(chat)
 				go chat.WritePump(context.TODO())
-				peerConnectedUI <- peer
+				guiapp.peerConnected <- peer
 
 				fyne.Do(func() {
 					activity.Stop()
@@ -358,8 +383,8 @@ func main() {
 			chat, exist := getChat(selectedChatId)
 			if exist {
 				chat.Close()
+				rmChat(chat.id)
 			}
-			rmChat(chat.id)
 		}
 		dialog.NewConfirm("Confirm", "Remove chat?", rmChat, mainWindow).Show()
 	})
@@ -389,11 +414,11 @@ func main() {
 			slog.Error("chat not found in UI chats", "id", chat.id)
 			return
 		}
-		content := chatUI.Content.(*fyne.Container)
+		content := chatUI.win.Content.(*fyne.Container)
 		t := canvas.NewText(fmt.Sprintf("[%s]: %s ", nickname, textEntry.Text), color.White)
 		content.Add(container.NewBorder(nil, nil, t, nil))
 		content.Refresh()
-		chatUI.ScrollToBottom()
+		chatUI.win.ScrollToBottom()
 		msg := &Message{PeerName: nickname, PeerId: ourPeerId, ChatId: chat.id, Text: text}
 		chat.SendMessage(msg)
 		textEntry.SetText("")
@@ -440,15 +465,6 @@ func main() {
 	)
 	content.SetOffset(0.3)
 
-	getOrCreateChatWindow := func(chatId uuid.UUID) *container.Scroll {
-		if _, exist := chatsMapUI[chatId]; !exist {
-			w := container.NewVScroll(container.NewVBox())
-			w.SetMinSize(fyne.NewSize(200, 50))
-			chatsMapUI[chatId] = w
-		}
-		return chatsMapUI[chatId]
-	}
-
 	chatListWdg.OnSelected = func(lii widget.ListItemID) {
 		chatId := fyneChatList[lii]
 		if chatId == uuid.Nil {
@@ -461,7 +477,7 @@ func main() {
 		}
 		selectedChatId = chatId
 		prevChatWindow := currentChatWindow
-		currentChatWindow = getOrCreateChatWindow(selectedChatId)
+		currentChatWindow = chatsMapUI[chatId].win
 		if prevChatWindow != nil {
 			prevChatWindow.Hide()
 		}
@@ -521,13 +537,17 @@ func main() {
 	go func() {
 		for {
 			select {
-			case peer := <-peerConnectedUI:
+			case peer := <-guiapp.peerConnected:
 				if _, exist := chatsMapUI[peer.chat.id]; !exist {
 					fyneChatList = append(fyneChatList, peer.chat.id)
 				}
 				fyne.Do(chatListWdg.Refresh)
-				getOrCreateChatWindow(peer.chat.id)
-			case peer := <-peerDisconnectedUI:
+				if _, exist := chatsMapUI[peer.chat.id]; !exist {
+					w := container.NewVScroll(container.NewVBox())
+					w.SetMinSize(fyne.NewSize(200, 50))
+					chatsMapUI[peer.chat.id] = &ChatUI{w, peer.chat.name}
+				}
+			case peer := <-guiapp.peerDisconnected:
 				// TODO review this case
 				rmChatFromList(peer.chat.id, &fyneChatList, chatListWdg)
 				lii := slices.Index(fyneChatList, peer.chat.id)
@@ -537,23 +557,24 @@ func main() {
 					chatListWdg.Unselect(widget.ListItemID(lii))
 				}
 				fyne.Do(chatListWdg.Refresh)
-			case msg := <-messageReceived:
+				// TODO remove current scroll
+			case msg := <-guiapp.recvMessage:
 				chat, exist := chatsMapUI[msg.ChatId]
 				if !exist {
 					slog.Error("no chat window found", "chat", msg.ChatId)
 					continue
 				}
-				chatContent := chat.Content.(*fyne.Container)
+				chatContent := chat.win.Content.(*fyne.Container)
 				m := fmt.Sprintf("[%s]: %s", msg.PeerName, msg.Text)
 				t := canvas.NewText(m, color.White)
 				fyne.Do(func() {
 					chatContent.Add(container.NewBorder(nil, nil, t, nil))
 					chatContent.Refresh()
 				})
-			case msg := <-ctrlMessage:
+			case msg := <-guiapp.ctrlMessage:
 				slog.Info("ctrl message", "msg", msg.string, "peer", msg.Peer)
-			case msg := <-imgMessage:
-				slog.Info("img message", "data", msg.byte)
+			case msg := <-guiapp.dataMessage:
+				slog.Info("data message", "data", msg.byte)
 			}
 		}
 	}()

@@ -34,10 +34,10 @@ func NewControlInitMessage(peerName string, chatName string) (*controlMessage, e
 }
 
 func SetupOfferee(
+	guiapp *GUIApp,
 	cfg webrtc.Configuration,
 	offer string,
 	myName string,
-	mqueue chan<- *Message,
 ) (*Peer, *webrtc.SessionDescription, error) {
 	sdp, err := decodeSDP(offer)
 	if err != nil {
@@ -47,7 +47,7 @@ func SetupOfferee(
 	if err != nil {
 		return nil, nil, err
 	}
-	peer, err := setupOffereeConnection(c, mqueue, myName)
+	peer, err := setupOffereeConnection(c, guiapp.recvMessage, guiapp.peerDisconnected, myName)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -81,7 +81,7 @@ func SetupOfferee(
 	return peer, &answer, nil
 }
 
-func setupOffereeConnection(c *webrtc.PeerConnection, msgOut chan<- *Message, myName string) (*Peer, error) {
+func setupOffereeConnection(c *webrtc.PeerConnection, msgOut chan<- *Message, peerDisconnected chan<- *Peer, myName string) (*Peer, error) {
 	// when setting up offeree he always connects to a new chat
 	p := NewPeer(c, NewChat("", false))
 
@@ -92,7 +92,7 @@ func setupOffereeConnection(c *webrtc.PeerConnection, msgOut chan<- *Message, my
 		case webrtc.PeerConnectionStateConnected:
 			p.addFlag(connectedFlag)
 		case webrtc.PeerConnectionStateDisconnected:
-			// TODO send chat removed event to UI
+			peerDisconnected <- p
 		case webrtc.PeerConnectionStateClosed:
 			//
 		case webrtc.PeerConnectionStateFailed:
@@ -184,18 +184,18 @@ func setupOffereeMsgChan(p *Peer, ch *webrtc.DataChannel, msgOut chan<- *Message
 func setupOffereeImgChan(ch *webrtc.DataChannel) {}
 
 func SetupOfferor(
+	guiapp *GUIApp,
 	cfg webrtc.Configuration,
 	chat *Chat,
 	name string,
 	chatName string,
-	onMsgRecv chan<- *Message,
 ) (string, *Peer, error) {
 	c, err := webrtc.NewPeerConnection(cfg)
 	var offerstr string
 	if err != nil {
 		return offerstr, nil, err
 	}
-	peer, err := setupOfferorConnection(c, chat, name, chatName, onMsgRecv)
+	peer, err := setupOfferorConnection(c, chat, name, chatName, guiapp.recvMessage)
 	if err != nil {
 		return offerstr, nil, err
 	}
