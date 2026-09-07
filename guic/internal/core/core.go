@@ -1,4 +1,4 @@
-package main
+package core
 
 import (
 	"encoding/base64"
@@ -34,12 +34,13 @@ func NewControlInitMessage(peerName string, chatName string) (*controlMessage, e
 }
 
 func SetupOfferee(
-	guiapp *GUIApp,
+	recvMessage chan *Message,
+	peerDisconnected chan *Peer,
 	cfg webrtc.Configuration,
 	offer string,
 	myName string,
 ) (*Peer, *webrtc.SessionDescription, error) {
-	sdp, err := decodeSDP(offer)
+	sdp, err := DecodeSDP(offer)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -47,7 +48,7 @@ func SetupOfferee(
 	if err != nil {
 		return nil, nil, err
 	}
-	peer, err := setupOffereeConnection(c, guiapp.recvMessage, guiapp.peerDisconnected, myName)
+	peer, err := setupOffereeConnection(c, recvMessage, peerDisconnected, myName)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -83,7 +84,7 @@ func SetupOfferee(
 
 func setupOffereeConnection(c *webrtc.PeerConnection, msgOut chan<- *Message, peerDisconnected chan<- *Peer, myName string) (*Peer, error) {
 	// when setting up offeree he always connects to a new chat
-	p := NewPeer(c, NewChat("", false))
+	p := NewPeer(c, CreateChat("", false))
 
 	c.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 		slog.Debug("connection state", "peer", p, "state", state.String())
@@ -160,7 +161,7 @@ func setupOffereeCtrlChan(p *Peer, ch *webrtc.DataChannel, myName string) {
 			}
 			p.Name = init.PeerName
 			p.addFlag(hasNameFlag)
-			p.chat.name = init.ChatName
+			p.Chat.Name = init.ChatName
 		default:
 			slog.Error("unknown control message type", "type", cm.Type, "payload", cm.Payload)
 		}
@@ -176,7 +177,7 @@ func setupOffereeMsgChan(p *Peer, ch *webrtc.DataChannel, msgOut chan<- *Message
 			return
 		}
 		// TODO chat id should be separate from message
-		msg.ChatId = p.chat.id
+		msg.ChatId = p.Chat.Id
 		msgOut <- msg
 	})
 }
@@ -184,7 +185,7 @@ func setupOffereeMsgChan(p *Peer, ch *webrtc.DataChannel, msgOut chan<- *Message
 func setupOffereeImgChan(ch *webrtc.DataChannel) {}
 
 func SetupOfferor(
-	guiapp *GUIApp,
+	recvMessage chan *Message,
 	cfg webrtc.Configuration,
 	chat *Chat,
 	name string,
@@ -195,7 +196,7 @@ func SetupOfferor(
 	if err != nil {
 		return offerstr, nil, err
 	}
-	peer, err := setupOfferorConnection(c, chat, name, chatName, guiapp.recvMessage)
+	peer, err := setupOfferorConnection(c, chat, name, chatName, recvMessage)
 	if err != nil {
 		return offerstr, nil, err
 	}
@@ -262,11 +263,11 @@ func setupOfferorConnection(c *webrtc.PeerConnection, chat *Chat, name string, c
 			slog.Error("message read", "error", err)
 			return
 		}
-		msg.ChatId = p.chat.id
+		msg.ChatId = p.Chat.Id
 		onMsgRecv <- msg
-		if p.chat.isHosted {
-			slog.Debug("broadcasting message", "from", p.Name, "chat", p.chat.name)
-			p.chat.SendMessage(msg)
+		if p.Chat.IsHosted {
+			slog.Debug("broadcasting message", "from", p.Name, "chat", p.Chat.Name)
+			p.Chat.SendMessage(msg)
 		}
 	})
 

@@ -1,4 +1,4 @@
-package main
+package core
 
 import (
 	"context"
@@ -20,22 +20,43 @@ type Message struct {
 }
 
 type Chat struct {
-	id         uuid.UUID
-	name       string
+	Id         uuid.UUID
+	Name       string
 	mu         sync.RWMutex
 	peers      map[uuid.UUID]*Peer
 	inMessages chan *Message
-	isHosted   bool
+	IsHosted   bool
 }
 
-func NewChat(name string, hosted bool) *Chat {
+func newChat(name string, hosted bool) *Chat {
 	return &Chat{
-		id:         uuid.New(),
-		name:       name,
+		Id:         uuid.New(),
+		Name:       name,
 		peers:      make(map[uuid.UUID]*Peer),
 		inMessages: make(chan *Message, 100),
-		isHosted:   hosted,
+		IsHosted:   hosted,
 	}
+}
+
+func CreateChat(name string, hosted bool) *Chat {
+	chat := newChat(name, hosted)
+	mu.Lock()
+	chatsMap[chat.Id] = chat
+	mu.Unlock()
+	return chat
+}
+
+func GetChat(id uuid.UUID) (*Chat, bool) {
+	mu.Lock()
+	c, ok := chatsMap[id]
+	mu.Unlock()
+	return c, ok
+}
+
+func DeleteChat(id uuid.UUID) {
+	mu.Lock()
+	delete(chatsMap, id)
+	mu.Unlock()
 }
 
 func (c *Chat) WritePump(ctx context.Context) {
@@ -61,25 +82,6 @@ func (c *Chat) WritePump(ctx context.Context) {
 	}
 }
 
-func getChat(id uuid.UUID) (*Chat, bool) {
-	mu.Lock()
-	c, ok := chatsMap[id]
-	mu.Unlock()
-	return c, ok
-}
-
-func addChat(c *Chat) {
-	mu.Lock()
-	chatsMap[c.id] = c
-	mu.Unlock()
-}
-
-func rmChat(id uuid.UUID) {
-	mu.Lock()
-	delete(chatsMap, id)
-	mu.Unlock()
-}
-
 func (c *Chat) SendMessage(m *Message) {
 	c.inMessages <- m
 }
@@ -102,7 +104,7 @@ func (c *Chat) Close() {
 	}
 }
 
-func (c *Chat) addPeers(peers ...*Peer) {
+func (c *Chat) AddPeers(peers ...*Peer) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, p := range peers {

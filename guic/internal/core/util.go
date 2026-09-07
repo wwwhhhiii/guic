@@ -1,4 +1,4 @@
-package main
+package core
 
 import (
 	"encoding/base64"
@@ -343,7 +343,7 @@ func RandSecret(n uint64) []byte {
 	return b
 }
 
-func decodeSDP(b64s string) (*webrtc.SessionDescription, error) {
+func DecodeSDP(b64s string) (*webrtc.SessionDescription, error) {
 	sdpData, err := base64.StdEncoding.DecodeString(b64s)
 	if err != nil {
 		return nil, err
@@ -355,7 +355,7 @@ func decodeSDP(b64s string) (*webrtc.SessionDescription, error) {
 	return sdp, nil
 }
 
-func encodeSDP(sdp *webrtc.SessionDescription) (string, error) {
+func EncodeSDP(sdp *webrtc.SessionDescription) (string, error) {
 	sdpdata, err := json.Marshal(sdp)
 	if err != nil {
 		return "", err

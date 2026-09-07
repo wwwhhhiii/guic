@@ -1,4 +1,4 @@
-package main
+package core
 
 import (
 	"github.com/google/uuid"
@@ -24,9 +24,9 @@ const (
 type Peer struct {
 	id       uuid.UUID
 	state    PeerState
-	chat     *Chat
+	Chat     *Chat
 	Name     string
-	conn     *webrtc.PeerConnection
+	Conn     *webrtc.PeerConnection
 	CtrlChan *webrtc.DataChannel
 	MsgChan  *webrtc.DataChannel
 	ImgChan  *webrtc.DataChannel
@@ -38,8 +38,8 @@ func NewPeer(c *webrtc.PeerConnection, chat *Chat) *Peer {
 	return &Peer{
 		id:    uuid.New(),
 		state: StatePending,
-		conn:  c,
-		chat:  chat,
+		Conn:  c,
+		Chat:  chat,
 		ready: make(chan struct{}),
 	}
 }
@@ -62,8 +62,8 @@ func (p *Peer) Disconnect() {
 	if p.ImgChan != nil {
 		p.ImgChan.Close()
 	}
-	if p.conn != nil {
-		p.conn.Close()
+	if p.Conn != nil {
+		p.Conn.Close()
 	}
 }
 
