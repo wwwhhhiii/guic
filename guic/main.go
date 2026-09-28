@@ -378,21 +378,33 @@ func setupUI(w *gui.ConnectionWindow, chw *gui.ChatWindow, guiapp *internal.Guic
 			chatsSelect,
 		)
 		addWin.SetContent(content)
-		// TODO do a cleanup logic
-		addWin.SetOnClosed(func() {})
+		addWin.SetOnClosed(func() {
+			// TODO add cleanup logic
+		})
 		addWin.Show()
 	}
 
-	chw.SendBtn.OnTapped = func() {
+	onSend := func(text string) {
+		if text == "" {
+			return
+		}
 		e, ok := guiapp.ChatRegistry.GetByItemId(w.SelectedLii)
 		if !ok {
 			log.Fatal("chat not found")
 		}
+		scroll := e.TextScroll.Content.(*fyne.Container)
+		message := fmt.Sprintf("[%s]: %s", guiapp.Nickname, text)
+		scroll.Add(canvas.NewText(message, color.White))
+		chw.TextEntry.SetText("")
 		e.Chat.SendMessage(&core.Message{
 			PeerName: guiapp.Nickname,
 			PeerId:   ourPeerId,
 			ChatId:   e.Chat.Id,
-			Text:     chw.TextEntry.Text,
+			Text:     text,
 		})
+
 	}
+
+	chw.SendBtn.OnTapped = func() { onSend(chw.TextEntry.Text) }
+	chw.TextEntry.OnSubmitted = onSend
 }
