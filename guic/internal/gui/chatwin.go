@@ -6,13 +6,13 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
-type ChatWindow struct {
+type DisplayWindow struct {
 	Content   *fyne.Container
 	TextEntry *widget.Entry
 	SendBtn   *widget.Button
 }
 
-func NewChatWindow() *ChatWindow {
+func NewDisplayWindow() *DisplayWindow {
 	textEntry := widget.NewEntry()
 	textEntry.SetPlaceHolder("Enter a message")
 	sendBtn := widget.NewButton("Send", nil)
@@ -23,28 +23,28 @@ func NewChatWindow() *ChatWindow {
 	)
 	content := container.NewBorder(nil, sendEntry, nil, nil, placeholderScroll)
 
-	return &ChatWindow{
+	return &DisplayWindow{
 		Content:   content,
 		TextEntry: textEntry,
 		SendBtn:   sendBtn,
 	}
 }
 
-func (cw *ChatWindow) Enable() {
+func (cw *DisplayWindow) Enable() {
 	cw.TextEntry.Enable()
 	cw.SendBtn.Enable()
 }
 
-func (cw *ChatWindow) Disable() {
+func (cw *DisplayWindow) Disable() {
 	cw.TextEntry.Disable()
 	cw.SendBtn.Disable()
 }
 
-func (cw *ChatWindow) CurrentScroll() *container.Scroll {
+func (cw *DisplayWindow) CurrentScroll() *container.Scroll {
 	return cw.Content.Objects[0].(*container.Scroll)
 }
 
-func (cw *ChatWindow) SetChat(win fyne.CanvasObject) {
+func (cw *DisplayWindow) SetChat(win fyne.CanvasObject) {
 	scroll := win.(*container.Scroll)
 	fyne.Do(func() {
 		cw.CurrentScroll().Hide()
@@ -52,5 +52,11 @@ func (cw *ChatWindow) SetChat(win fyne.CanvasObject) {
 		cw.Content.Objects[0] = scroll
 		cw.CurrentScroll().Show()
 		cw.Content.Refresh()
+	})
+}
+
+func (cw *DisplayWindow) Clear() {
+	fyne.Do(func() {
+		cw.Content.Objects[0] = container.NewVScroll(container.NewVBox())
 	})
 }

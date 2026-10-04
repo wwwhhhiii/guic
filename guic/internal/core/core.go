@@ -33,7 +33,7 @@ func NewControlInitMessage(peerName string, chatName string) (*controlMessage, e
 	return cmsg, nil
 }
 
-func SetupOfferee(
+func SetupAcceptor(
 	recvMessage chan *Message,
 	peerDisconnected chan *Peer,
 	cfg webrtc.Configuration,
@@ -48,7 +48,7 @@ func SetupOfferee(
 	if err != nil {
 		return nil, nil, err
 	}
-	peer, err := setupOffereeConnection(c, recvMessage, peerDisconnected, myName)
+	peer, err := setupAcceptorConnection(c, recvMessage, peerDisconnected, myName)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -82,7 +82,12 @@ func SetupOfferee(
 	return peer, &answer, nil
 }
 
-func setupOffereeConnection(c *webrtc.PeerConnection, msgOut chan<- *Message, peerDisconnected chan<- *Peer, myName string) (*Peer, error) {
+func setupAcceptorConnection(
+	c *webrtc.PeerConnection,
+	msgOut chan<- *Message,
+	peerDisconnected chan<- *Peer,
+	myName string,
+) (*Peer, error) {
 	// when setting up offeree he always connects to a new chat
 	p := NewPeer(c, CreateChat("", false))
 
@@ -95,9 +100,9 @@ func setupOffereeConnection(c *webrtc.PeerConnection, msgOut chan<- *Message, pe
 		case webrtc.PeerConnectionStateDisconnected:
 			peerDisconnected <- p
 		case webrtc.PeerConnectionStateClosed:
-			//
+			peerDisconnected <- p
 		case webrtc.PeerConnectionStateFailed:
-			//
+			peerDisconnected <- p
 		}
 	})
 
@@ -107,15 +112,15 @@ func setupOffereeConnection(c *webrtc.PeerConnection, msgOut chan<- *Message, pe
 		switch dc.Label() {
 		case "ctrl":
 			p.CtrlChan = dc
-			setupOffereeCtrlChan(p, dc, myName)
+			setupAcceptorCtrlChan(p, dc, myName)
 			p.addFlag(hasCtrlFlag)
 		case "msg":
 			p.MsgChan = dc
-			setupOffereeMsgChan(p, dc, msgOut)
+			setupAcceptorMsgChan(p, dc, msgOut)
 			p.addFlag(hasMsgFlag)
 		case "img":
 			p.ImgChan = dc
-			setupOffereeImgChan(dc)
+			setupAcceptorImgChan(dc)
 			p.addFlag(hasImgFlag)
 		default:
 			log.Fatalln("unknown channel label")
@@ -125,7 +130,7 @@ func setupOffereeConnection(c *webrtc.PeerConnection, msgOut chan<- *Message, pe
 	return p, nil
 }
 
-func setupOffereeCtrlChan(p *Peer, ch *webrtc.DataChannel, myName string) {
+func setupAcceptorCtrlChan(p *Peer, ch *webrtc.DataChannel, myName string) {
 	ch.OnOpen(func() {
 		// chat name is irrelevant here
 		// because offeree joins chat
@@ -168,7 +173,7 @@ func setupOffereeCtrlChan(p *Peer, ch *webrtc.DataChannel, myName string) {
 	})
 }
 
-func setupOffereeMsgChan(p *Peer, ch *webrtc.DataChannel, msgOut chan<- *Message) {
+func setupAcceptorMsgChan(p *Peer, ch *webrtc.DataChannel, msgOut chan<- *Message) {
 	ch.OnMessage(func(m webrtc.DataChannelMessage) {
 		slog.Debug("channel msg received", "name", ch.Label(), "data", m.Data)
 		msg := &Message{}
@@ -182,21 +187,21 @@ func setupOffereeMsgChan(p *Peer, ch *webrtc.DataChannel, msgOut chan<- *Message
 	})
 }
 
-func setupOffereeImgChan(ch *webrtc.DataChannel) {}
+func setupAcceptorImgChan(ch *webrtc.DataChannel) {}
 
-func SetupOfferor(
+func SetupInitiator(
 	recvMessage chan *Message,
+	peerDisconnected chan *Peer,
 	cfg webrtc.Configuration,
 	chat *Chat,
 	name string,
-	chatName string,
 ) (string, *Peer, error) {
 	c, err := webrtc.NewPeerConnection(cfg)
 	var offerstr string
 	if err != nil {
 		return offerstr, nil, err
 	}
-	peer, err := setupOfferorConnection(c, chat, name, chatName, recvMessage)
+	peer, err := setupInitiator(c, chat, name, recvMessage)
 	if err != nil {
 		return offerstr, nil, err
 	}
@@ -217,14 +222,19 @@ func SetupOfferor(
 	return offerstr, peer, nil
 }
 
-func setupOfferorConnection(c *webrtc.PeerConnection, chat *Chat, name string, chatName string, onMsgRecv chan<- *Message) (*Peer, error) {
+func setupInitiator(
+	c *webrtc.PeerConnection,
+	chat *Chat,
+	name string,
+	onMsgRecv chan<- *Message,
+) (*Peer, error) {
 	p := NewPeer(c, chat)
 
 	var err error
 	if p.CtrlChan, err = c.CreateDataChannel("ctrl", nil); err != nil {
 		return nil, err
 	}
-	setupOfferorCtrlChan(p, p.CtrlChan, name, chatName)
+	setupInitiatorCtrlChan(p, p.CtrlChan, name, chat.Name)
 	if p.MsgChan, err = c.CreateDataChannel("msg", nil); err != nil {
 		return nil, err
 	}
@@ -238,14 +248,11 @@ func setupOfferorConnection(c *webrtc.PeerConnection, chat *Chat, name string, c
 			// TODO
 		}
 		if state == webrtc.PeerConnectionStateClosed {
-			// TODO
 		}
 		if state == webrtc.PeerConnectionStateConnected {
 			p.addFlag(connectedFlag)
 		}
 		if state == webrtc.PeerConnectionStateDisconnected {
-			// TODO peerDisconnectedUI <- peer
-			// rmChat(peer.chat.id)
 		}
 	})
 
@@ -286,7 +293,7 @@ func setupOfferorConnection(c *webrtc.PeerConnection, chat *Chat, name string, c
 
 }
 
-func setupOfferorCtrlChan(p *Peer, ch *webrtc.DataChannel, name string, chatName string) {
+func setupInitiatorCtrlChan(p *Peer, ch *webrtc.DataChannel, name string, chatName string) {
 	ch.OnOpen(func() {
 		slog.Debug("channel opened", "name", p.CtrlChan.Label())
 		p.addFlag(hasCtrlFlag)

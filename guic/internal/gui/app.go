@@ -12,13 +12,13 @@ import (
 )
 
 type Application struct {
-	app              *fyne.App
-	mainWin          *fyne.Window
-	connectionWindow *ConnectionWindow
-	chatWindow       *ChatWindow
+	app           *fyne.App
+	mainWin       *fyne.Window
+	chatsWindow   *ChatsWindow
+	displayWindow *DisplayWindow
 }
 
-func NewApplication(connectionWindow *ConnectionWindow, chatWindow *ChatWindow) *Application {
+func NewApplication(chatsWin *ChatsWindow, displayWin *DisplayWindow) *Application {
 	a := app.New()
 	mainWin := a.NewWindow("Guic")
 	mainWin.Resize(fyne.NewSize(800, 600))
@@ -27,8 +27,8 @@ func NewApplication(connectionWindow *ConnectionWindow, chatWindow *ChatWindow) 
 		app:     &a,
 		mainWin: &mainWin,
 
-		connectionWindow: connectionWindow,
-		chatWindow:       chatWindow,
+		chatsWindow:   chatsWin,
+		displayWindow: displayWin,
 	}
 }
 
@@ -104,4 +104,12 @@ func (cr *ChatRegistry) GetByUUID(id uuid.UUID) (*regEntry, bool) {
 	defer cr.mu.Unlock()
 	e, ok := cr.byUUID[id]
 	return e, ok
+}
+
+func (cr *ChatRegistry) List() []*regEntry {
+	l := make([]*regEntry, 0, len(cr.byId))
+	for _, e := range cr.byId {
+		l = append(l, e)
+	}
+	return l
 }

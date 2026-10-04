@@ -6,7 +6,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
-type ConnectionWindow struct {
+type ChatsWindow struct {
 	SelectedLii widget.ListItemID
 
 	Content       *fyne.Container
@@ -16,7 +16,7 @@ type ConnectionWindow struct {
 	RemoveChatBtn *widget.Button
 }
 
-func NewConnectionWindow() *ConnectionWindow {
+func NewChatsWindow() *ChatsWindow {
 	chatList := widget.NewList(nil, nil, nil)
 	connectBtn := widget.NewButton("Connect", nil)
 	addPeerBtn := widget.NewButton("Add peer", nil)
@@ -28,7 +28,7 @@ func NewConnectionWindow() *ConnectionWindow {
 		container.NewBorder(nil, removeChatBtn, nil, nil, chatList),
 	)
 
-	return &ConnectionWindow{
+	return &ChatsWindow{
 		SelectedLii:   -1,
 		Content:       connectionContainer,
 		ChatList:      chatList,
@@ -38,7 +38,7 @@ func NewConnectionWindow() *ConnectionWindow {
 	}
 }
 
-func (cw *ConnectionWindow) RemoveChatById(lii widget.ListItemID) {
+func (cw *ChatsWindow) RemoveChatById(lii widget.ListItemID) {
 	fyne.Do(func() {
 		cw.ChatList.Unselect(lii)
 		cw.ChatList.Refresh()

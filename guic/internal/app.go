@@ -9,8 +9,10 @@ import (
 )
 
 type GuicApp struct {
-	App        fyne.App
-	Mainwindow fyne.Window
+	App           fyne.App
+	Mainwindow    fyne.Window
+	ChatsWindow   *gui.ChatsWindow
+	DisplayWindow *gui.DisplayWindow
 
 	ChatRegistry *gui.ChatRegistry
 	WebrtcConf   webrtc.Configuration
@@ -32,12 +34,16 @@ type GuicApp struct {
 func NewGuicApp(
 	app fyne.App,
 	mainWindow fyne.Window,
+	connWindow *gui.ChatsWindow,
+	displayWindow *gui.DisplayWindow,
 	webrtcConf webrtc.Configuration,
 	nickname string,
 	chatRegistry *gui.ChatRegistry,
 ) *GuicApp {
 	return &GuicApp{
 		App:              app,
+		ChatsWindow:      connWindow,
+		DisplayWindow:    displayWindow,
 		Mainwindow:       mainWindow,
 		WebrtcConf:       webrtcConf,
 		Nickname:         nickname,
